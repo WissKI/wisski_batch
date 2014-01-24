@@ -1,6 +1,5 @@
-
 This module executes multiple SparQL queries / updates in one run.
-It can be run manually or triggered by cron.
+It can be run manually, triggered by cron or after node save.
 
 
 License
