@@ -1,0 +1,57 @@
+<?php
+// $ID$
+/*
+*@author Martin Scholz, unless otherwise said
+*/
+
+/**
+* @author Martin Scholz
+*/
+function wisski_batch_schema () {
+
+  $schemas = array();
+
+  $schemas['wisski_batch'] = array(
+    'fields' => array(
+      'bid' => array(
+        'type' => 'serial',
+        'size' => 'normal',
+        'not null' => TRUE,
+      ),
+      'sparql' => array(
+        'type' => 'text',
+        'size' => 'normal',
+        'not null' => TRUE,
+      ),
+      'trigger' => array(
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'length' => 'big',
+        'not null' => TRUE,
+      ),
+    ),
+    'primary key' => array('bid'),
+  );
+
+  return $schemas;
+
+}
+
+
+/**
+* @author Martin Scholz
+*/
+function wisski_batch_install () {
+  drupal_install_schema('wisski_batch');
+}
+
+/**
+* @author Martin Scholz
+*/
+function wisski_batch_uninstall () {
+  drupal_uninstall_schema('wisski_batch');
+}

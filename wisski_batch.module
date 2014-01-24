@@ -1,0 +1,298 @@
+<?php
+
+
+/** Module wisski_batch
+*
+* Manage and run bulk Sparql queries.
+* Optionally trigger them with cron.
+*
+* @author Martin Scholz, unless otherwise noted
+*/
+
+
+/** */
+function wisski_batch_perm() {
+  return array('wisski administer batch sparql');
+}
+
+
+/**
+* @author Martin Scholz
+*/ 
+function wisski_batch_menu() {
+
+  $items['admin/settings/wisski/batch'] = array(
+    'type' => MENU_LOCAL_TASK,
+    'title' => 'SparQL Batch Jobs',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('wisski_batch_admin_page'),
+    'access arguments' => array('wisski administer batch sparql'),
+  );
+  $items['admin/settings/wisski/batch/run/%'] = array(
+    'type' => MENU_CALLBACK,
+    'title' => 'Run Batch Job',
+    'page callback' => 'wisski_batch_run',
+    'page arguments' => array(5, TRUE),
+    'access arguments' => array('wisski administer batch sparql'),
+  );
+
+  return $items;
+
+}
+
+
+
+function wisski_batch_cron() {
+  
+  wisski_batch_run_multiple(1, variable_get('wisski_batch_number_per_cron', 2));
+
+}
+
+
+function wisski_batch_nodeapi($node, $op) {
+  
+  if ($node->type == 'individual' && ($op == 'insert' || $op == 'update')) {
+
+    wisski_batch_run_multiple(2);
+
+  }
+  
+}
+
+
+function wisski_batch_run_multiple($trigger, $limit = 0) {
+  
+  if (variable_get('wisski_batch_semaphor_' . $trigger, 0)) {
+    watchdog('wisski batch', "Last batch run for trigger @t did not finish! Stopped at batch job @bid", array('@bid' => variable_get('wisski_batch_semaphor', 0), '@t' => $type));
+  }
+  
+  $tmp = db_query_range('SELECT bid FROM {wisski_batch} WHERE `trigger` & %d != 0 ORDER BY timestamp DESC', $trigger, 0, variable_get('wisski_batch_number_per_cron', 2));
+  
+  $jobs = array();
+  while ($job = db_fetch_array($tmp)) $jobs[] = $job['bid'];
+
+  foreach ($jobs as $job) {
+    variable_set('wisski_batch_semaphor_' . $trigger, $job);
+    wisski_batch_run($job);
+  }
+  
+  variable_set('wisski_batch_semaphor_' . $trigger, 0);
+
+}
+
+
+/*** 
+*
+* @author Martin Scholz
+* 
+*/
+function wisski_batch_admin_page() {
+  
+  $form = array(
+    '#tree' => TRUE,
+  );
+  $form['general'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('General settings'),
+  );
+  $form['general']['number_per_cron'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Number of batches to execute per cron run'),
+    '#default_value' => variable_get('wisski_batch_number_per_cron', 2),
+  );
+
+  $tmp = db_query("SELECT * FROM {wisski_batch} WHERE 1 ORDER BY bid");
+  
+  while ($row = db_fetch_array($tmp)) {
+    $form['batch_' . $row['bid']] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Batch job @id', array('@id' => $row['bid'])),
+    );
+    $defval = array_fill(1, 2, 0);
+    foreach ($defval as $k => &$v) {
+      $v = $row['trigger'] & $k;
+    }
+    $options = array(
+      1 => 'Cron',
+      2 => 'Node save',
+    );
+    $form['batch_' . $row['bid']]['trigger'] = array(
+      '#type' => 'checkboxes',
+      '#title' => t('Trigger'),
+      '#options' => $options,
+      '#default_value' => $defval,
+    );
+    $form['batch_' . $row['bid']]['sparql'] = array(
+      '#type' => 'textarea',
+      '#title' => t('SparQL batch'),
+      '#default_value' => $row['sparql'],
+      '#description' => t('Queries/Updates are separated by (at least) two empty lines. Lines beginning with "//" or "##" (first two characters in line!) are regarded as comments. Prefixes defined in the ontology tab may be used. Empty this field to delete the job.'),
+      '#rows' => 10,
+    );
+    $form['batch_' . $row['bid']]['timestamp'] = array(
+      '#type' => 'item',
+      '#title' => t('Last run'),
+      '#value' => $row['timestamp'] == 0 ? t('Never') : date('D, d M Y H:i:s', $row['timestamp']),
+    );
+    $form['batch_' . $row['bid']]['run_now'] = array(
+      '#type' => 'markup',
+      '#value' => l('Run now', 'admin/settings/wisski/batch/run/' . $row['bid']),
+    );
+    
+  }
+
+  $form['new_batch'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Create new batch job'),
+  );
+  $options = array(
+    1 => 'Cron',
+    2 => 'Node save',
+  );
+  $form['new_batch']['trigger'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Trigger'),
+    '#options' => $options,
+  );
+  $form['new_batch']['sparql'] = array(
+    '#type' => 'textarea',
+    '#title' => t('SparQL batch'),
+    '#description' => t('Queries/Updates are separated by (at least) two empty lines. Lines beginning with "//" (first two characters in line!) are regarded as comments. Prefixes defined in the ontology tab may be used.'),
+    '#rows' => 10,
+  );
+
+  $form['buttons'] = array(
+    '#prefix' => '<p>',
+    '#suffix' => '</p>',
+  );
+  $form['buttons']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save configuration'),
+  );
+
+  return $form;
+
+}
+
+
+
+/*** 
+*
+* @author Martin Scholz
+* 
+*/
+function wisski_batch_admin_page_submit($form, $form_state) {
+    
+  $v = $form_state['values'];
+
+  variable_set('wisski_batch_number_per_cron', $v['general']['number_per_cron']);
+
+  if (trim($v['new_batch']['sparql']) != '') {
+    $trigger = 0;
+    foreach ($v['new_batch']['trigger'] as $key => $val) {
+      if ($val) $trigger |= $key;
+    }
+    db_query("INSERT INTO {wisski_batch} (sparql, `trigger`, timestamp) VALUES ('%s', %d, %d)", $v['new_batch']['sparql'], $trigger, 0);
+  }
+
+  foreach ($v as $k => $b) {
+    if (substr($k, 0, 6) != 'batch_') continue;
+
+    $bid = substr($k, 6);
+
+    if (trim($b['sparql']) == '') {
+
+
+      db_query("DELETE FROM {wisski_batch} WHERE bid = %d", $bid);
+
+    } else {
+
+      $trigger = 0;
+      foreach ($b['trigger'] as $key => $val) {
+        if ($val) $trigger |= $key;
+      }
+      db_query("UPDATE {wisski_batch} SET sparql = '%s', `trigger` = %d WHERE bid = %d", $b['sparql'], $trigger, $bid);
+
+    }
+
+  }
+
+}
+
+
+
+function wisski_batch_run($bid, $gui = FALSE) {
+
+  if (is_array($bid)) {
+    foreach ($bid as $b) wisski_batch_run($b, $gui);
+  }
+
+  $tmp = db_query('SELECT * FROM {wisski_batch} WHERE bid = %d', $bid);
+  $job = db_fetch_array($tmp);
+
+  if ($job == NULL) {
+    if ($gui) {
+      drupal_set_message(t('Bad batch job ID: %id.', array('%id' => $bid)), 'error');
+    } else {
+      watchdog('wisski batch', 'Bad batch job ID: %id.', array('%id' => $bid));
+    }
+  }
+  
+  $queries = $job['sparql'];
+  $queries = str_replace("\r\n", "\n", $queries);
+  $queries = str_replace("\r", "\n", $queries);
+  $queries = preg_replace('!^(//|##).*$!m', '', $queries);
+  $queries = explode("\n\n\n", $queries);
+  
+  foreach ($queries as $k => $q) if (trim($q) == '') unset($queries[$k]); else $queries[$k] = trim($q);
+  $queries = array_values($queries);
+
+  if ($gui) drupal_set_message(t('Found @n queries', array('@n' => count($queries))));
+  
+  $store = wisski_store_getObj()->wisski_ARCAdapter_getStore();
+
+  $nsdecl = '';
+  foreach (wisski_store_getObj()->wisski_ARCAdapter_getNamespaces() as $p => $ns) $nsdecl .= "PREFIX $p: <$ns> \n";
+  
+  $output = array();
+
+  foreach ($queries as $k => $q) {
+    $store->doNotTransform();
+    $result = $store->query($nsdecl . $q);
+    if ($store->getErrors()) {
+      if ($gui) {
+        drupal_set_message(t('Query @k terminated with errors, aborting.', array('@k' => $k + 1)), 'error');
+        drupal_set_message(htmlentities($nsdecl . $q), 'error');
+        foreach ($store->getErrors() as $e) drupal_set_message($e, 'error');
+      } else {
+        watchdog('wisski batch', 'Query @k terminated with errors, aborting.', array('@k' => $k + 1), WATCHDOG_ERROR);
+      }
+      break;
+    }
+    list($fl) = explode("\n", $q, 2);
+    if ($gui) {
+      drupal_set_message(t('Successfully executed query @k of @n.', array('@k' => $k + 1, '@n' => count($queries))));
+      $output["query$k"] = array(
+        '#type' => 'item',
+        '#title' => "Query $k",
+        '#value' => str_replace("\n", '<br/>', htmlentities($nsdecl . $q)),
+        '#weight' => 2 * $k + 1,
+      );
+      $output["result$k"] = array(
+        '#type' => 'item',
+        '#title' => "Result $k",
+        '#value' => htmlentities(serialize($result)),
+        '#weight' => 2 * $k,
+      );
+
+    }
+  }
+
+  db_query('UPDATE {wisski_batch} SET timestamp = %d WHERE bid = %d', time(), $bid);
+
+  return !$gui ? NULL : drupal_render($output);
+
+}
+
+
+

@@ -1,0 +1,7 @@
+; $Id$
+name = WissKI Batch
+description = Execute multiple SparQL queries / updates in one run; either manually or triggered by cron.
+version = 0.1
+core = 6.x
+package = "WissKI"
+dependencies[] = wisski_store
