@@ -1,6 +1,9 @@
 This module executes multiple SparQL queries / updates in one run.
 It can be run manually, triggered by cron or after node save.
 
+It can be used to perform periodic garbage collection on the triple data or
+to simulate partial rule-based reasoning.
+
 
 License
 =============================
